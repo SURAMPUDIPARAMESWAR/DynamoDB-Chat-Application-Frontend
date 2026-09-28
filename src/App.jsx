@@ -9,32 +9,50 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [nextCursor, setNextCursor] = useState(null);
 
   const chatId = "201";
   const currentUserId = "101";
 
-  const loadMessages = async () => {
+  const loadMessages = async (cursor = null) => {
     try {
       setLoading(true);
       setError("");
 
-      const response = await fetch(
-        `${API_URL}/chats/${chatId}/messages`
-      );
+      let url = `${API_URL}/chats/${chatId}/messages?limit=5`;
+
+      if (cursor) {
+        url += `&cursor=${encodeURIComponent(cursor)}`;
+      }
+
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error("Failed to load messages");
+      }
 
       const result = await response.json();
 
-      if (!response.ok || !result.success) {
-        throw new Error(result.message || "Failed to load messages");
+      if (cursor) {
+        setMessages((previous) => [...result.data, ...previous]);
+      } else {
+        setMessages(result.data || []);
       }
 
-      setMessages(result.data || []);
+      setNextCursor(result.nextCursor || null);
     } catch (err) {
-      console.error(err);
       setError(err.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadOlderMessages = async () => {
+    if (!nextCursor || loading) {
+      return;
+    }
+
+    await loadMessages(nextCursor);
   };
 
   useEffect(() => {
@@ -52,19 +70,16 @@ function App() {
       setSending(true);
       setError("");
 
-      const response = await fetch(
-        `${API_URL}/chats/${chatId}/messages`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            senderId: currentUserId,
-            message: cleanMessage
-          })
-        }
-      );
+      const response = await fetch(`${API_URL}/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          senderId: currentUserId,
+          message: cleanMessage,
+        }),
+      });
 
       const result = await response.json();
 
@@ -72,10 +87,7 @@ function App() {
         throw new Error(result.message || "Failed to send message");
       }
 
-      setMessages((previousMessages) => [
-        result.data,
-        ...previousMessages
-      ]);
+      setMessages((previousMessages) => [result.data, ...previousMessages]);
 
       setMessageText("");
     } catch (err) {
@@ -94,14 +106,12 @@ function App() {
 
   return (
     <div className="app">
-
       <header className="header">
         <h1>DynamoDB Chat Application</h1>
         <span>Node.js + Express + DynamoDB</span>
       </header>
 
       <main className="chat-layout">
-
         <aside className="sidebar">
           <h2>Chats</h2>
 
@@ -112,33 +122,29 @@ function App() {
         </aside>
 
         <section className="chat-window">
-
           <div className="chat-header">
             <h2>Project Team</h2>
             <span>Chat ID: {chatId}</span>
           </div>
 
           <div className="messages">
-
-            {loading && (
-              <p className="status">
-                Loading messages...
-              </p>
+            {nextCursor && !loading && (
+              <button
+                className="load-more-button"
+                onClick={loadOlderMessages}
+                disabled={loading}
+              >
+                Load Older Messages
+              </button>
             )}
 
-            {error && (
-              <p className="error">
-                {error}
-              </p>
-            )}
+            {loading && <p className="status">Loading messages...</p>}
 
-            {!loading &&
-              !error &&
-              messages.length === 0 && (
-                <p className="status">
-                  No messages yet.
-                </p>
-              )}
+            {error && <p className="error">{error}</p>}
+
+            {!loading && !error && messages.length === 0 && (
+              <p className="status">No messages yet.</p>
+            )}
 
             {!loading &&
               messages.map((item) => (
@@ -158,25 +164,17 @@ function App() {
 
                   <p>{item.message}</p>
 
-                  <small>
-                    {new Date(
-                      item.createdAt
-                    ).toLocaleString()}
-                  </small>
+                  <small>{new Date(item.createdAt).toLocaleString()}</small>
                 </div>
               ))}
-
           </div>
 
           <div className="message-input">
-
             <input
               type="text"
               placeholder="Type a message..."
               value={messageText}
-              onChange={(event) =>
-                setMessageText(event.target.value)
-              }
+              onChange={(event) => setMessageText(event.target.value)}
               onKeyDown={handleKeyDown}
               disabled={sending}
             />
@@ -187,13 +185,9 @@ function App() {
             >
               {sending ? "Sending..." : "Send"}
             </button>
-
           </div>
-
         </section>
-
       </main>
-
     </div>
   );
 }

@@ -156,3 +156,24 @@ body {
   color: #b00020;
   border-radius: 8px;
 }
+
+.load-more-button {
+  display: block;
+  margin: 12px auto;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.load-more-button:hover {
+  background: #1d4ed8;
+}
+
+.load-more-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
