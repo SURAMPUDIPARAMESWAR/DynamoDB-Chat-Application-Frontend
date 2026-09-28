@@ -27,3 +27,4 @@ dist/
 .env
 .env.*
 !.env.example
+VITE_API_URL=http://localhost:3904
