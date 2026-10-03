@@ -1,1589 +1,2006 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 
-const API_URL = import.meta.env.VITE_API_URL;
+import {
+    authApi,
+    userApi,
+    chatApi,
+    messageApi,
+    clearAuth
+} from "./api/api";
 
-function getInitials(name = "") {
-  return (
-    name
-      .trim()
-      .split(/\s+/)
-      .map((word) => word[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "U"
-  );
-}
+
+// =====================================================
+// APP
+// =====================================================
 
 function App() {
-  // =========================================================
-  // USER STATE
-  // =========================================================
 
-  const [currentUser, setCurrentUser] = useState(() => {
-    try {
-      const savedUser = localStorage.getItem("dynamodb_current_user");
-      return savedUser ? JSON.parse(savedUser) : null;
-    } catch (error) {
-      console.error("Failed to restore user:", error);
-      return null;
-    }
-  });
+    const [currentUser, setCurrentUser] = useState(null);
 
-  const [userIdInput, setUserIdInput] = useState("");
+    const [token, setToken] = useState(
+        localStorage.getItem("dynamodb_chat_token")
+    );
 
-  // Registration
-  const [registerUserId, setRegisterUserId] = useState("");
-  const [registerName, setRegisterName] = useState("");
-  const [registerEmail, setRegisterEmail] = useState("");
-  const [showRegister, setShowRegister] = useState(false);
+    const [loading, setLoading] = useState(true);
 
-  const [loginLoading, setLoginLoading] = useState(false);
-  const [registerLoading, setRegisterLoading] = useState(false);
 
-  const [loginError, setLoginError] = useState("");
-  const [registerError, setRegisterError] = useState("");
-  const [registerSuccess, setRegisterSuccess] = useState("");
+    // =================================================
+    // RESTORE LOGIN SESSION
+    // =================================================
 
-  // =========================================================
-  // CHAT STATE
-  // =========================================================
+    useEffect(() => {
 
-  const [chats, setChats] = useState([]);
-  const [selectedChatId, setSelectedChatId] = useState(null);
+        const restoreSession = async () => {
 
-  // =========================================================
-  // NEW CHAT STATE
-  // =========================================================
+            if (!token) {
 
-  const [showNewChat, setShowNewChat] = useState(false);
-  const [availableUsers, setAvailableUsers] = useState([]);
-  const [selectedMemberIds, setSelectedMemberIds] = useState([]);
-  const [newChatName, setNewChatName] = useState("");
-  const [newChatLoading, setNewChatLoading] = useState(false);
-  const [usersLoading, setUsersLoading] = useState(false);
-  const [newChatError, setNewChatError] = useState("");
+                setLoading(false);
 
-  // =========================================================
-  // MESSAGE STATE
-  // =========================================================
+                return;
+            }
 
-  const [messages, setMessages] = useState([]);
-  const [messageText, setMessageText] = useState("");
 
-  const [loading, setLoading] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState("");
+            try {
 
-  const [nextCursor, setNextCursor] = useState(null);
+                const result =
+                    await userApi.getMe();
 
-  // =========================================================
-  // MEMBER STATE
-  // =========================================================
 
-  const [members, setMembers] = useState([]);
-  const [membersLoading, setMembersLoading] = useState(false);
-  const [userProfiles, setUserProfiles] = useState({});
+                setCurrentUser(result.user);
 
-  const messagesContainerRef = useRef(null);
-  const shouldScrollToBottom = useRef(true);
 
-  // =========================================================
-  // USER LOGIN
-  // =========================================================
+                localStorage.setItem(
+                    "dynamodb_current_user",
+                    JSON.stringify(result.user)
+                );
 
-  const handleLogin = async (event) => {
-    event?.preventDefault();
+            } catch (error) {
 
-    const userId = userIdInput.trim();
+                console.error(
+                    "Session restore failed:",
+                    error
+                );
 
-    if (!userId) {
-      setLoginError("Please enter your User ID.");
-      return;
-    }
 
-    setLoginLoading(true);
-    setLoginError("");
+                clearAuth();
 
-    try {
-      const response = await fetch(`${API_URL}/users/${userId}`);
-      const result = await response.json();
+                setToken(null);
 
-      if (!response.ok) {
-        throw new Error(result.message || "User not found");
-      }
+                setCurrentUser(null);
 
-      setCurrentUser(result.data);
+            } finally {
 
-      localStorage.setItem(
-        "dynamodb_current_user",
-        JSON.stringify(result.data)
-      );
+                setLoading(false);
+            }
+        };
 
-      setUserIdInput("");
-    } catch (err) {
-      setLoginError(err.message);
-    } finally {
-      setLoginLoading(false);
-    }
-  };
 
-  // =========================================================
-  // USER REGISTRATION
-  // =========================================================
+        restoreSession();
 
-  const handleRegister = async (event) => {
-    event.preventDefault();
+    }, [token]);
 
-    const userId = registerUserId.trim();
-    const name = registerName.trim();
-    const email = registerEmail.trim();
 
-    setRegisterError("");
-    setRegisterSuccess("");
+    // =================================================
+    // LOGIN
+    // =================================================
 
-    if (!userId || !name || !email) {
-      setRegisterError("User ID, name and email are required.");
-      return;
-    }
+    const handleLogin = async (
+        loginId,
+        password
+    ) => {
 
-    setRegisterLoading(true);
+        const result =
+            await authApi.login({
+                loginId,
+                password
+            });
 
-    try {
-      const response = await fetch(`${API_URL}/users`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          userId,
-          name,
-          email,
-        }),
-      });
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          result.message || "Failed to register user"
+        localStorage.setItem(
+            "dynamodb_chat_token",
+            result.token
         );
-      }
 
-      setRegisterSuccess(
-        "Registration successful! You can now login."
-      );
 
-      setRegisterUserId("");
-      setRegisterName("");
-      setRegisterEmail("");
-
-      setUserIdInput(userId);
-    } catch (err) {
-      setRegisterError(err.message);
-    } finally {
-      setRegisterLoading(false);
-    }
-  };
-
-  // =========================================================
-  // LOGOUT
-  // =========================================================
-
-  const handleLogout = () => {
-    localStorage.removeItem("dynamodb_current_user");
-
-    setCurrentUser(null);
-    setChats([]);
-    setSelectedChatId(null);
-    setMessages([]);
-    setMembers([]);
-    setUserProfiles({});
-    setError("");
-    setNextCursor(null);
-
-    setShowNewChat(false);
-    setAvailableUsers([]);
-    setSelectedMemberIds([]);
-    setNewChatName("");
-    setNewChatError("");
-  };
-
-  // =========================================================
-  // LOAD USER CHATS
-  // =========================================================
-
-  const loadChats = async () => {
-    if (!currentUser?.userId) {
-      return;
-    }
-
-    try {
-      setError("");
-
-      const response = await fetch(
-        `${API_URL}/users/${currentUser.userId}/chats`
-      );
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          result.message || "Failed to load chats"
+        localStorage.setItem(
+            "dynamodb_current_user",
+            JSON.stringify(result.user)
         );
-      }
 
-      const chatList = result.data || [];
 
-      setChats(chatList);
+        setToken(result.token);
 
-      if (chatList.length > 0) {
-        setSelectedChatId((previous) => {
-          const stillExists = chatList.some(
-            (chat) => String(chat.chatId) === String(previous)
-          );
+        setCurrentUser(result.user);
+    };
 
-          return stillExists
-            ? previous
-            : chatList[0].chatId;
+
+    // =================================================
+    // REGISTER
+    // =================================================
+
+    const handleRegister = async (
+        name,
+        loginId,
+        password
+    ) => {
+
+        await authApi.register({
+            name,
+            loginId,
+            password
         });
-      } else {
-        setSelectedChatId(null);
-      }
-    } catch (err) {
-      setError(err.message);
-    }
-  };
+    };
 
-  // =========================================================
-  // LOAD REGISTERED USERS
-  // =========================================================
 
-  const loadUsers = async () => {
-    setUsersLoading(true);
-    setNewChatError("");
+    // =================================================
+    // LOGOUT
+    // =================================================
 
-    try {
-      const response = await fetch(`${API_URL}/users`);
-      const result = await response.json();
+    const handleLogout = () => {
 
-      if (!response.ok) {
-        throw new Error(
-          result.message || "Failed to load users"
+        clearAuth();
+
+        setToken(null);
+
+        setCurrentUser(null);
+    };
+
+
+    // =================================================
+    // LOADING
+    // =================================================
+
+    if (loading) {
+
+        return (
+            <div className="loading-screen">
+                Loading...
+            </div>
         );
-      }
-
-      setAvailableUsers(result.data || []);
-    } catch (err) {
-      setNewChatError(err.message);
-    } finally {
-      setUsersLoading(false);
-    }
-  };
-
-  // =========================================================
-  // OPEN NEW CHAT
-  // =========================================================
-
-  const openNewChat = async () => {
-    setShowNewChat(true);
-
-    setNewChatName("");
-    setNewChatError("");
-
-    setSelectedMemberIds([
-      String(currentUser.userId),
-    ]);
-
-    await loadUsers();
-  };
-
-  // =========================================================
-  // CLOSE NEW CHAT
-  // =========================================================
-
-  const closeNewChat = () => {
-    if (newChatLoading) {
-      return;
     }
 
-    setShowNewChat(false);
-    setNewChatName("");
-    setSelectedMemberIds([]);
-    setNewChatError("");
-  };
 
-  // =========================================================
-  // TOGGLE CHAT MEMBER
-  // =========================================================
+    // =================================================
+    // AUTHENTICATION
+    // =================================================
 
-  const toggleMember = (userId) => {
-    const id = String(userId);
+    if (!currentUser) {
 
-    // Creator/current user is always included.
-    if (id === String(currentUser.userId)) {
-      return;
-    }
-
-    setSelectedMemberIds((previous) => {
-      if (previous.includes(id)) {
-        return previous.filter(
-          (memberId) => memberId !== id
+        return (
+            <AuthScreen
+                onLogin={handleLogin}
+                onRegister={handleRegister}
+            />
         );
-      }
-
-      return [...previous, id];
-    });
-  };
-
-  // =========================================================
-  // CREATE NEW CHAT
-  // =========================================================
-
-  const createNewChat = async () => {
-    const cleanName = newChatName.trim();
-
-    setNewChatError("");
-
-    if (!cleanName) {
-      setNewChatError("Chat name is required.");
-      return;
     }
 
-    if (selectedMemberIds.length < 2) {
-      setNewChatError(
-        "Select at least one other user."
-      );
-      return;
-    }
 
-    setNewChatLoading(true);
+    // =================================================
+    // CHAT APPLICATION
+    // =================================================
 
-    try {
-      /*
-       * The current backend uses a chatId supplied
-       * by the client.
-       */
-      const chatId = String(Date.now());
+    return (
+        <ChatApplication
+            currentUser={currentUser}
+            onLogout={handleLogout}
+        />
+    );
+}
 
-      const response = await fetch(
-        `${API_URL}/chats`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            chatId,
-            name: cleanName,
-            createdBy: String(currentUser.userId),
-            memberIds: selectedMemberIds,
-          }),
-        }
-      );
 
-      const result = await response.json();
+// =====================================================
+// AUTH SCREEN
+// =====================================================
 
-      if (!response.ok) {
-        throw new Error(
-          result.message ||
-            "Failed to create chat"
+function AuthScreen({
+    onLogin,
+    onRegister
+}) {
+
+    const [mode, setMode] =
+        useState("login");
+
+
+    const [name, setName] =
+        useState("");
+
+
+    const [loginId, setLoginId] =
+        useState("");
+
+
+    const [password, setPassword] =
+        useState("");
+
+
+    const [confirmPassword, setConfirmPassword] =
+        useState("");
+
+
+    const [error, setError] =
+        useState("");
+
+
+    const [success, setSuccess] =
+        useState("");
+
+
+    const [loading, setLoading] =
+        useState(false);
+
+
+    // =================================================
+    // RESET FORM
+    // =================================================
+
+    const resetForm = () => {
+
+        setName("");
+
+        setLoginId("");
+
+        setPassword("");
+
+        setConfirmPassword("");
+
+        setError("");
+
+        setSuccess("");
+    };
+
+
+    // =================================================
+    // SWITCH LOGIN / REGISTER
+    // =================================================
+
+    const switchMode = () => {
+
+        resetForm();
+
+        setMode(
+            mode === "login"
+                ? "register"
+                : "login"
         );
-      }
+    };
 
-      // Close modal
-      setShowNewChat(false);
 
-      setNewChatName("");
-      setSelectedMemberIds([]);
-      setNewChatError("");
+    // =================================================
+    // SUBMIT
+    // =================================================
 
-      // Refresh conversations
-      await loadChats();
+    const handleSubmit = async (event) => {
 
-      // Open newly created chat
-      setSelectedChatId(chatId);
-    } catch (err) {
-      setNewChatError(err.message);
-    } finally {
-      setNewChatLoading(false);
-    }
-  };
+        event.preventDefault();
 
-  // =========================================================
-  // LOAD MEMBERS
-  // =========================================================
+        setError("");
 
-  const loadMembers = async () => {
-    if (!selectedChatId) {
-      return;
-    }
+        setSuccess("");
 
-    setMembersLoading(true);
 
-    try {
-      const response = await fetch(
-        `${API_URL}/chats/${selectedChatId}/members`
-      );
+        try {
 
-      const result = await response.json();
+            setLoading(true);
 
-      if (!response.ok) {
-        throw new Error(
-          result.message ||
-            "Failed to load members"
-        );
-      }
 
-      const memberList = result.data || [];
+            // =========================================
+            // REGISTER
+            // =========================================
 
-      setMembers(memberList);
+            if (mode === "register") {
 
-      const profileMap = {};
+                if (
+                    !name.trim() ||
+                    !loginId.trim() ||
+                    !password
+                ) {
 
-      await Promise.all(
-        memberList.map(async (member) => {
-          try {
-            const userResponse = await fetch(
-              `${API_URL}/users/${member.userId}`
-            );
+                    throw new Error(
+                        "All fields are required"
+                    );
+                }
 
-            const userResult =
-              await userResponse.json();
+
+                if (password.length < 8) {
+
+                    throw new Error(
+                        "Password must contain at least 8 characters"
+                    );
+                }
+
+
+                if (
+                    password !==
+                    confirmPassword
+                ) {
+
+                    throw new Error(
+                        "Passwords do not match"
+                    );
+                }
+
+
+                await onRegister(
+                    name.trim(),
+                    loginId.trim(),
+                    password
+                );
+
+
+                setSuccess(
+                    "Registration successful. You can now login."
+                );
+
+
+                setMode("login");
+
+                setName("");
+
+                setPassword("");
+
+                setConfirmPassword("");
+
+                return;
+            }
+
+
+            // =========================================
+            // LOGIN
+            // =========================================
 
             if (
-              userResponse.ok &&
-              userResult.data
+                !loginId.trim() ||
+                !password
             ) {
-              profileMap[member.userId] =
-                userResult.data;
+
+                throw new Error(
+                    "Login ID and password are required"
+                );
             }
-          } catch {
-            // Ignore individual profile failure.
-          }
-        })
-      );
 
-      setUserProfiles(profileMap);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setMembersLoading(false);
-    }
-  };
 
-  // =========================================================
-  // LOAD MESSAGES
-  // =========================================================
+            await onLogin(
+                loginId.trim(),
+                password
+            );
 
-  const loadMessages = async (
-    chatId,
-    cursor = null,
-    appendOlder = false
-  ) => {
-    if (!chatId) {
-      return;
-    }
+        } catch (error) {
 
-    setLoading(true);
-    setError("");
+            setError(
+                error.message ||
+                "Something went wrong"
+            );
 
-    try {
-      let url =
-        `${API_URL}/chats/${chatId}/messages` +
-        `?limit=5`;
+        } finally {
 
-      if (cursor) {
-        url +=
-          `&cursor=${encodeURIComponent(cursor)}`;
-      }
-
-      const response = await fetch(url);
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          result.message ||
-            "Failed to load messages"
-        );
-      }
-
-      const newMessages = result.data || [];
-
-      if (appendOlder) {
-        setMessages((previous) => [
-          ...newMessages,
-          ...previous,
-        ]);
-
-        shouldScrollToBottom.current = false;
-      } else {
-        setMessages(newMessages);
-        shouldScrollToBottom.current = true;
-      }
-
-      setNextCursor(
-        result.nextCursor || null
-      );
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // =========================================================
-  // LOAD OLDER MESSAGES
-  // =========================================================
-
-  const loadOlderMessages = async () => {
-    if (
-      !selectedChatId ||
-      !nextCursor ||
-      loading
-    ) {
-      return;
-    }
-
-    await loadMessages(
-      selectedChatId,
-      nextCursor,
-      true
-    );
-  };
-
-  // =========================================================
-  // SEND MESSAGE
-  // =========================================================
-
-  const sendMessage = async () => {
-    const cleanMessage =
-      messageText.trim();
-
-    if (
-      !cleanMessage ||
-      !selectedChatId ||
-      !currentUser
-    ) {
-      return;
-    }
-
-    setSending(true);
-    setError("");
-
-    try {
-      const response = await fetch(
-        `${API_URL}/chats/${selectedChatId}/messages`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            senderId: currentUser.userId,
-            message: cleanMessage,
-          }),
+            setLoading(false);
         }
-      );
+    };
 
-      const result =
-        await response.json();
 
-      if (!response.ok) {
-        throw new Error(
-          result.message ||
-            "Failed to send message"
-        );
-      }
-
-      setMessageText("");
-
-      shouldScrollToBottom.current = true;
-
-      await loadMessages(
-        selectedChatId
-      );
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  // =========================================================
-  // EFFECTS
-  // =========================================================
-
-  useEffect(() => {
-    if (!currentUser) {
-      return;
-    }
-
-    loadChats();
-  }, [currentUser]);
-
-  useEffect(() => {
-    if (!selectedChatId) {
-      setMessages([]);
-      setMembers([]);
-      setUserProfiles({});
-      setNextCursor(null);
-      return;
-    }
-
-    loadMessages(selectedChatId);
-    loadMembers();
-  }, [selectedChatId]);
-
-  useEffect(() => {
-    if (
-      messagesContainerRef.current &&
-      shouldScrollToBottom.current
-    ) {
-      const container =
-        messagesContainerRef.current;
-
-      container.scrollTop =
-        container.scrollHeight;
-    }
-  }, [messages]);
-
-  // =========================================================
-  // ENTER KEY
-  // =========================================================
-
-  const handleMessageKeyDown = (event) => {
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey
-    ) {
-      event.preventDefault();
-
-      sendMessage();
-    }
-  };
-
-  // =========================================================
-  // USER NAME
-  // =========================================================
-
-  const getUserName = (userId) => {
-    const profile =
-      userProfiles[userId];
-
-    if (profile?.name) {
-      return profile.name;
-    }
-
-    if (profile?.userName) {
-      return profile.userName;
-    }
-
-    if (profile?.username) {
-      return profile.username;
-    }
-
-    if (
-      String(currentUser?.userId) ===
-      String(userId)
-    ) {
-      return currentUser.name;
-    }
-
-    return `User ${userId}`;
-  };
-
-  // =========================================================
-  // LOGIN / REGISTRATION SCREEN
-  // =========================================================
-
-  if (!currentUser) {
     return (
-      <div className="auth-page">
-        <div className="auth-card">
+        <div className="auth-container">
 
-          <div className="auth-logo">
-            💬
-          </div>
+            <div className="auth-card">
 
-          <h1>
-            DynamoDB Chat
-          </h1>
+                <div className="auth-header">
 
-          <p className="auth-subtitle">
-            Single-table chat application
-          </p>
+                    <h1>
+                        DynamoChat
+                    </h1>
 
-          {!showRegister ? (
-            <>
-              <form
-                onSubmit={handleLogin}
-              >
-                <label>
-                  User ID
-                </label>
-
-                <input
-                  type="text"
-                  value={userIdInput}
-                  onChange={(event) =>
-                    setUserIdInput(
-                      event.target.value
-                    )
-                  }
-                  placeholder="Enter your registered User ID"
-                />
-
-                {loginError && (
-                  <div className="auth-error">
-                    {loginError}
-                  </div>
-                )}
-
-                <button
-                  className="primary-button"
-                  type="submit"
-                  disabled={loginLoading}
-                >
-                  {loginLoading
-                    ? "Logging in..."
-                    : "Login"}
-                </button>
-              </form>
-
-              <div className="auth-divider">
-                <span>OR</span>
-              </div>
-
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  setShowRegister(true);
-                  setLoginError("");
-                }}
-              >
-                Register New User
-              </button>
-
-              <div className="demo-users">
-                <p>
-                  Demo users
-                </p>
-
-                <button
-                  onClick={() =>
-                    setUserIdInput("101")
-                  }
-                >
-                  Parameswar · 101
-                </button>
-
-                <button
-                  onClick={() =>
-                    setUserIdInput("102")
-                  }
-                >
-                  Sai · 102
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <form
-                onSubmit={handleRegister}
-              >
-                <label>
-                  User ID
-                </label>
-
-                <input
-                  type="text"
-                  value={registerUserId}
-                  onChange={(event) =>
-                    setRegisterUserId(
-                      event.target.value
-                    )
-                  }
-                  placeholder="Example: 103"
-                />
-
-                <label>
-                  Name
-                </label>
-
-                <input
-                  type="text"
-                  value={registerName}
-                  onChange={(event) =>
-                    setRegisterName(
-                      event.target.value
-                    )
-                  }
-                  placeholder="Enter your name"
-                />
-
-                <label>
-                  Email
-                </label>
-
-                <input
-                  type="email"
-                  value={registerEmail}
-                  onChange={(event) =>
-                    setRegisterEmail(
-                      event.target.value
-                    )
-                  }
-                  placeholder="Enter your email"
-                />
-
-                {registerError && (
-                  <div className="auth-error">
-                    {registerError}
-                  </div>
-                )}
-
-                {registerSuccess && (
-                  <div className="auth-success">
-                    {registerSuccess}
-                  </div>
-                )}
-
-                <button
-                  className="primary-button"
-                  type="submit"
-                  disabled={registerLoading}
-                >
-                  {registerLoading
-                    ? "Registering..."
-                    : "Register User"}
-                </button>
-              </form>
-
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  setShowRegister(false);
-                  setRegisterError("");
-                  setRegisterSuccess("");
-                }}
-              >
-                Back to Login
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // =========================================================
-  // CHAT APPLICATION
-  // =========================================================
-
-  return (
-    <div className="chat-app">
-
-      {/* =====================================================
-          TOP HEADER
-      ===================================================== */}
-
-      <header className="chat-header">
-
-        <div className="brand">
-
-          <div className="brand-icon">
-            💬
-          </div>
-
-          <div>
-            <h2>
-              DynamoDB Chat
-            </h2>
-
-            <span>
-              Single-table messaging
-            </span>
-          </div>
-
-        </div>
-
-
-        <div className="current-user">
-
-          <div className="avatar">
-            {getInitials(
-              currentUser.name
-            )}
-          </div>
-
-          <div className="current-user-info">
-
-            <strong>
-              {currentUser.name}
-            </strong>
-
-            <span>
-              ID: {currentUser.userId}
-            </span>
-
-          </div>
-
-          <button
-            className="logout-button"
-            onClick={handleLogout}
-          >
-            Logout
-          </button>
-
-        </div>
-
-      </header>
-
-
-      {/* =====================================================
-          CHAT LAYOUT
-      ===================================================== */}
-
-      <div className="chat-layout">
-
-        {/* ===================================================
-            SIDEBAR
-        =================================================== */}
-
-        <aside className="sidebar">
-
-          <div className="sidebar-title">
-
-            <div>
-              <h3>
-                Conversations
-              </h3>
-
-              <span>
-                {chats.length} chat
-                {chats.length !== 1
-                  ? "s"
-                  : ""}
-              </span>
-            </div>
-
-            <button
-              className="new-chat-button"
-              onClick={openNewChat}
-              title="Create new chat"
-            >
-              +
-            </button>
-
-          </div>
-
-
-          <div className="chat-list">
-
-            {loading &&
-              chats.length === 0 && (
-                <div className="empty-state">
-                  Loading chats...
-                </div>
-              )}
-
-
-            {!loading &&
-              chats.length === 0 &&
-              !error && (
-                <div className="empty-state">
-
-                  <div className="empty-icon">
-                    💬
-                  </div>
-
-                  <strong>
-                    No chats yet
-                  </strong>
-
-                  <span>
-                    Click + to create
-                    your first chat.
-                  </span>
+                    <p>
+                        DynamoDB Single-Table
+                        Chat Application
+                    </p>
 
                 </div>
-              )}
 
 
-            {chats.map((chat) => (
+                {/* =================================
+                    AUTH TABS
+                ================================== */}
 
-              <button
-                key={chat.chatId}
-                className={`chat-item ${
-                  String(selectedChatId) ===
-                  String(chat.chatId)
-                    ? "active"
-                    : ""
-                }`}
-                onClick={() =>
-                  setSelectedChatId(
-                    chat.chatId
-                  )
-                }
-              >
+                <div className="auth-tabs">
 
-                <div className="chat-avatar">
-                  {getInitials(
-                    chat.chatName ||
-                      "Chat"
-                  )}
-                </div>
+                    <button
+                        className={
+                            mode === "login"
+                                ? "active"
+                                : ""
+                        }
+                        onClick={() => {
 
-                <div className="chat-item-info">
+                            resetForm();
 
-                  <strong>
-                    {chat.chatName ||
-                      `Chat ${chat.chatId}`}
-                  </strong>
+                            setMode("login");
+                        }}
+                    >
+                        Login
+                    </button>
 
-                  <span>
-                    Chat ID:{" "}
-                    {chat.chatId}
-                  </span>
+
+                    <button
+                        className={
+                            mode === "register"
+                                ? "active"
+                                : ""
+                        }
+                        onClick={() => {
+
+                            resetForm();
+
+                            setMode("register");
+                        }}
+                    >
+                        Register
+                    </button>
 
                 </div>
 
-              </button>
 
-            ))}
+                {/* =================================
+                    FORM
+                ================================== */}
 
-          </div>
+                <form
+                    className="auth-form"
+                    onSubmit={handleSubmit}
+                >
 
-        </aside>
+                    {/* NAME */}
 
+                    {mode === "register" && (
 
-        {/* ===================================================
-            MAIN CHAT
-        =================================================== */}
+                        <div className="form-group">
 
-        <main className="chat-main">
+                            <label>
+                                Name
+                            </label>
 
-          {selectedChatId ? (
-            <>
+                            <input
+                                type="text"
+                                value={name}
+                                onChange={(e) =>
+                                    setName(
+                                        e.target.value
+                                    )
+                                }
+                                placeholder="Enter your name"
+                            />
 
-              {/* =============================================
-                  CHAT HEADER
-              ============================================= */}
-
-              <div className="conversation-header">
-
-                <div>
-
-                  <h2>
-                    {
-                      chats.find(
-                        (chat) =>
-                          String(
-                            chat.chatId
-                          ) ===
-                          String(
-                            selectedChatId
-                          )
-                      )?.chatName ||
-                      `Chat ${selectedChatId}`
-                    }
-                  </h2>
-
-                  <div className="member-list">
-
-                    {membersLoading ? (
-                      <span>
-                        Loading members...
-                      </span>
-                    ) : (
-                      members.map(
-                        (member) => (
-                          <span
-                            className="member-chip"
-                            key={
-                              member.userId
-                            }
-                          >
-
-                            <span className="mini-avatar">
-                              {getInitials(
-                                getUserName(
-                                  member.userId
-                                )
-                              )}
-                            </span>
-
-                            {getUserName(
-                              member.userId
-                            )}
-
-                          </span>
-                        )
-                      )
+                        </div>
                     )}
 
-                  </div>
 
-                </div>
+                    {/* LOGIN ID */}
 
-              </div>
+                    <div className="form-group">
 
+                        <label>
+                            Login ID
+                        </label>
 
-              {/* =============================================
-                  ERROR
-              ============================================= */}
-
-              {error && (
-                <div className="chat-error">
-                  {error}
-                </div>
-              )}
-
-
-              {/* =============================================
-                  MESSAGES
-              ============================================= */}
-
-              <div
-                className="messages-container"
-                ref={
-                  messagesContainerRef
-                }
-              >
-
-                {nextCursor && (
-                  <button
-                    className="older-button"
-                    onClick={
-                      loadOlderMessages
-                    }
-                    disabled={loading}
-                  >
-                    {loading
-                      ? "Loading..."
-                      : "Load older messages"}
-                  </button>
-                )}
-
-
-                {messages.length === 0 &&
-                  !loading && (
-                    <div className="empty-messages">
-
-                      <div>
-                        💬
-                      </div>
-
-                      <strong>
-                        No messages yet
-                      </strong>
-
-                      <span>
-                        Send the first
-                        message.
-                      </span>
+                        <input
+                            type="text"
+                            value={loginId}
+                            onChange={(e) =>
+                                setLoginId(
+                                    e.target.value
+                                )
+                            }
+                            placeholder="Enter your login ID"
+                        />
 
                     </div>
-                  )}
 
 
-                {messages.map(
-                  (message) => {
+                    {/* PASSWORD */}
 
-                    const isOwn =
-                      String(
-                        message.senderId
-                      ) ===
-                      String(
-                        currentUser.userId
-                      );
+                    <div className="form-group">
 
-                    return (
-                      <div
-                        className={`message-row ${
-                          isOwn
-                            ? "own"
-                            : ""
-                        }`}
-                        key={
-                          message.messageId
-                        }
-                      >
+                        <label>
+                            Password
+                        </label>
 
-                        {!isOwn && (
-                          <div className="message-avatar">
-                            {getInitials(
-                              getUserName(
-                                message.senderId
-                              )
-                            )}
-                          </div>
+                        <input
+                            type="password"
+                            value={password}
+                            onChange={(e) =>
+                                setPassword(
+                                    e.target.value
+                                )
+                            }
+                            placeholder="Enter your password"
+                        />
+
+                    </div>
+
+
+                    {/* CONFIRM PASSWORD */}
+
+                    {mode === "register" && (
+
+                        <div className="form-group">
+
+                            <label>
+                                Confirm Password
+                            </label>
+
+                            <input
+                                type="password"
+                                value={confirmPassword}
+                                onChange={(e) =>
+                                    setConfirmPassword(
+                                        e.target.value
+                                    )
+                                }
+                                placeholder="Confirm your password"
+                            />
+
+                        </div>
+                    )}
+
+
+                    {/* ERROR */}
+
+                    {error && (
+
+                        <div className="error-message">
+                            {error}
+                        </div>
+                    )}
+
+
+                    {/* SUCCESS */}
+
+                    {success && (
+
+                        <div className="success-message">
+                            {success}
+                        </div>
+                    )}
+
+
+                    {/* SUBMIT */}
+
+                    <button
+                        type="submit"
+                        className="auth-submit"
+                        disabled={loading}
+                    >
+                        {loading
+                            ? "Please wait..."
+                            : mode === "login"
+                                ? "Login"
+                                : "Create Account"}
+                    </button>
+
+                </form>
+
+
+                {/* =================================
+                    FOOTER
+                ================================== */}
+
+                <div className="auth-footer">
+
+                    {mode === "login"
+                        ? "Don't have an account?"
+                        : "Already have an account?"}
+
+                    <button
+                        type="button"
+                        onClick={switchMode}
+                    >
+                        {mode === "login"
+                            ? "Register"
+                            : "Login"}
+                    </button>
+
+                </div>
+
+            </div>
+
+        </div>
+    );
+}
+
+
+// =====================================================
+// CHAT APPLICATION
+// =====================================================
+
+function ChatApplication({
+    currentUser,
+    onLogout
+}) {
+
+    const [users, setUsers] =
+        useState([]);
+
+
+    const [chats, setChats] =
+        useState([]);
+
+
+    const [selectedChat, setSelectedChat] =
+        useState(null);
+
+
+    const [members, setMembers] =
+        useState([]);
+
+
+    const [messages, setMessages] =
+        useState([]);
+
+
+    const [nextCursor, setNextCursor] =
+        useState(null);
+
+
+    const [loading, setLoading] =
+        useState(false);
+
+
+    const [error, setError] =
+        useState("");
+
+
+    const [messageText, setMessageText] =
+        useState("");
+
+
+    const [showNewChat, setShowNewChat] =
+        useState(false);
+
+
+    // =================================================
+    // LOAD INITIAL DATA
+    // =================================================
+
+    useEffect(() => {
+
+        loadUsers();
+
+        loadChats();
+
+    }, []);
+
+
+    // =================================================
+    // LOAD USERS
+    // =================================================
+
+    const loadUsers = async () => {
+
+        try {
+
+            const result =
+                await userApi.getAll();
+
+
+            setUsers(
+                result.data || []
+            );
+
+        } catch (error) {
+
+            console.error(
+                "Load users error:",
+                error
+            );
+
+
+            setError(
+                error.message
+            );
+        }
+    };
+
+
+    // =================================================
+    // LOAD CHATS
+    // =================================================
+
+    const loadChats = async () => {
+
+        try {
+
+            const result =
+                await chatApi.getMyChats();
+
+
+            setChats(
+                result.data || []
+            );
+
+        } catch (error) {
+
+            console.error(
+                "Load chats error:",
+                error
+            );
+
+
+            setError(
+                error.message
+            );
+        }
+    };
+
+
+    // =================================================
+    // SELECT CHAT
+    // =================================================
+
+    const selectChat = async (chat) => {
+
+        try {
+
+            setSelectedChat(chat);
+
+            setMessages([]);
+
+            setMembers([]);
+
+            setNextCursor(null);
+
+            setLoading(true);
+
+
+            // =========================================
+            // LOAD MEMBERS
+            // =========================================
+
+            const memberResult =
+                await chatApi.getMembers(
+                    chat.chatId
+                );
+
+
+            const memberItems =
+                memberResult.data || [];
+
+
+            const memberUsers =
+                memberItems
+                    .map((member) =>
+                        users.find(
+                            (user) =>
+                                user.userId ===
+                                member.userId
+                        )
+                    )
+                    .filter(Boolean);
+
+
+            setMembers(
+                memberUsers
+            );
+
+
+            // =========================================
+            // LOAD MESSAGES
+            // =========================================
+
+            const messageResult =
+                await messageApi.getMessages(
+                    chat.chatId,
+                    20
+                );
+
+
+            const loadedMessages =
+                messageResult.data || [];
+
+
+            // API returns newest first.
+            // UI displays oldest -> newest.
+
+            setMessages(
+                [...loadedMessages].reverse()
+            );
+
+
+            setNextCursor(
+                messageResult.nextCursor
+            );
+
+        } catch (error) {
+
+            console.error(
+                "Select chat error:",
+                error
+            );
+
+
+            setError(
+                error.message
+            );
+
+        } finally {
+
+            setLoading(false);
+        }
+    };
+
+
+    // =================================================
+    // LOAD OLDER MESSAGES
+    // =================================================
+
+    const loadOlderMessages = async () => {
+
+        if (
+            !selectedChat ||
+            !nextCursor
+        ) {
+
+            return;
+        }
+
+
+        try {
+
+            const result =
+                await messageApi.getMessages(
+                    selectedChat.chatId,
+                    20,
+                    nextCursor
+                );
+
+
+            const olderMessages =
+                result.data || [];
+
+
+            setMessages((previous) => [
+
+                ...[...olderMessages].reverse(),
+
+                ...previous
+
+            ]);
+
+
+            setNextCursor(
+                result.nextCursor
+            );
+
+        } catch (error) {
+
+            console.error(
+                "Load older messages error:",
+                error
+            );
+
+
+            setError(
+                error.message
+            );
+        }
+    };
+
+
+    // =================================================
+    // SEND MESSAGE
+    // =================================================
+
+    const sendMessage = async () => {
+
+        const cleanMessage =
+            messageText.trim();
+
+
+        if (
+            !cleanMessage ||
+            !selectedChat
+        ) {
+
+            return;
+        }
+
+
+        try {
+
+            const result =
+                await messageApi.send(
+                    selectedChat.chatId,
+                    cleanMessage
+                );
+
+
+            setMessages((previous) => [
+
+                ...previous,
+
+                result.data
+
+            ]);
+
+
+            setMessageText("");
+
+        } catch (error) {
+
+            console.error(
+                "Send message error:",
+                error
+            );
+
+
+            setError(
+                error.message
+            );
+        }
+    };
+
+
+    // =================================================
+    // ENTER KEY
+    // =================================================
+
+    const handleMessageKeyDown = (event) => {
+
+        if (
+            event.key === "Enter" &&
+            !event.shiftKey
+        ) {
+
+            event.preventDefault();
+
+            sendMessage();
+        }
+    };
+
+
+    // =================================================
+    // CREATE CHAT
+    // =================================================
+
+    const createChat = async (
+        name,
+        selectedMemberIds
+    ) => {
+
+        try {
+
+            const result =
+                await chatApi.create({
+
+                    name,
+
+                    memberIds:
+                        selectedMemberIds
+
+                });
+
+
+            const newChat =
+                result.data;
+
+
+            setChats((previous) => [
+
+                newChat,
+
+                ...previous
+
+            ]);
+
+
+            setShowNewChat(false);
+
+
+            await selectChat(
+                newChat
+            );
+
+        } catch (error) {
+
+            console.error(
+                "Create chat error:",
+                error
+            );
+
+
+            setError(
+                error.message
+            );
+        }
+    };
+
+
+    // =================================================
+    // DELETE SPECIFIC MESSAGE
+    // =================================================
+
+    const handleDeleteMessage = async (
+        messageId
+    ) => {
+
+        if (!selectedChat) {
+            return;
+        }
+
+
+        const confirmed =
+            window.confirm(
+                "Are you sure you want to delete this message?"
+            );
+
+
+        if (!confirmed) {
+            return;
+        }
+
+
+        try {
+
+            await messageApi.delete(
+                selectedChat.chatId,
+                messageId
+            );
+
+
+            // Remove immediately from UI
+
+            setMessages((previous) =>
+                previous.filter(
+                    (message) =>
+                        message.messageId !==
+                        messageId
+                )
+            );
+
+        } catch (error) {
+
+            console.error(
+                "Delete message error:",
+                error
+            );
+
+
+            setError(
+                error.message
+            );
+        }
+    };
+
+
+    // =================================================
+    // DELETE ENTIRE CHAT
+    // =================================================
+    const handleLeaveChat = async () => {
+    if (!selectedChat) {
+        return;
+    }
+
+    const confirmed = window.confirm(
+        `Are you sure you want to leave "${selectedChat.name}"?`
+    );
+
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        await chatApi.leave(selectedChat.chatId);
+
+        const updatedChats = chats.filter(
+            (chat) => chat.chatId !== selectedChat.chatId
+        );
+
+        setChats(updatedChats);
+        setSelectedChat(null);
+        setMessages([]);
+        setMembers([]);
+
+        alert("You have left the chat.");
+
+    } catch (error) {
+        console.error("Leave chat error:", error);
+
+        alert(
+            error.message ||
+            "Failed to leave the chat."
+        );
+    }
+};
+    const handleDeleteChat = async () => {
+
+        if (!selectedChat) {
+            return;
+        }
+
+
+        const confirmed =
+            window.confirm(
+                `Are you sure you want to delete "${selectedChat.name}"? This will permanently delete the chat and all its messages.`
+            );
+
+
+        if (!confirmed) {
+            return;
+        }
+
+
+        try {
+
+            await chatApi.delete(
+                selectedChat.chatId
+            );
+
+
+            // Remove chat from sidebar
+
+            setChats((previous) =>
+                previous.filter(
+                    (chat) =>
+                        chat.chatId !==
+                        selectedChat.chatId
+                )
+            );
+
+
+            // Clear selected chat
+
+            setSelectedChat(null);
+
+            setMembers([]);
+
+            setMessages([]);
+
+            setNextCursor(null);
+
+            setMessageText("");
+
+        } catch (error) {
+
+            console.error(
+                "Delete chat error:",
+                error
+            );
+
+
+            setError(
+                error.message
+            );
+        }
+    };
+
+
+    // =================================================
+    // CLEAR ERROR
+    // =================================================
+
+    const clearError = () => {
+
+        setError("");
+    };
+
+
+    // =================================================
+    // RENDER
+    // =================================================
+
+    return (
+        <div className="app-container">
+
+            {/* =========================================
+                HEADER
+            ========================================== */}
+
+            <header className="app-header">
+
+                <div className="app-logo">
+                    DynamoChat
+                </div>
+
+
+                <div className="user-section">
+
+                    <div className="user-info">
+
+                        <strong>
+                            {currentUser.name}
+                        </strong>
+
+                        <span>
+                            {currentUser.loginId}
+                        </span>
+
+                    </div>
+
+
+                    <button
+                        className="logout-button"
+                        onClick={onLogout}
+                    >
+                        Logout
+                    </button>
+
+                </div>
+
+            </header>
+
+
+            {/* =========================================
+                MAIN
+            ========================================== */}
+
+            <div className="app-body">
+
+                {/* =====================================
+                    SIDEBAR
+                ===================================== */}
+
+                <aside className="sidebar">
+
+                    <div className="sidebar-header">
+
+                        <h2>
+                            Chats
+                        </h2>
+
+
+                        <button
+                            className="new-chat-button"
+                            onClick={() =>
+                                setShowNewChat(true)
+                            }
+                            title="Create new chat"
+                        >
+                            +
+                        </button>
+
+                    </div>
+
+
+                    <div className="chat-list">
+
+                        {chats.length === 0 && (
+
+                            <div className="empty-state">
+                                No chats yet
+                            </div>
+
                         )}
 
 
-                        <div className="message-content">
+                        {chats.map((chat) => (
 
-                          {!isOwn && (
-                            <span className="sender-name">
-                              {getUserName(
-                                message.senderId
-                              )}
-                            </span>
-                          )}
+                            <button
+                                key={chat.chatId}
+                                className={
+                                    selectedChat?.chatId ===
+                                    chat.chatId
+                                        ? "chat-item active"
+                                        : "chat-item"
+                                }
+                                onClick={() =>
+                                    selectChat(chat)
+                                }
+                            >
+
+                                <div className="chat-avatar">
+
+                                    {chat.name
+                                        ?.charAt(0)
+                                        ?.toUpperCase()}
+
+                                </div>
 
 
-                          <div className="message-bubble">
-                            {message.message}
-                          </div>
+                                <div className="chat-item-info">
+
+                                    <strong>
+                                        {chat.name}
+                                    </strong>
+
+                                    <span>
+                                        {chat.memberCount}{" "}
+                                        {chat.memberCount === 1
+                                            ? "member"
+                                            : "members"}
+                                    </span>
+
+                                </div>
+
+                            </button>
+
+                        ))}
+
+                    </div>
+
+                </aside>
 
 
-                          <span className="message-time">
+                {/* =====================================
+                    CHAT AREA
+                ===================================== */}
 
-                            {message.createdAt
-                              ? new Date(
-                                  message.createdAt
-                                ).toLocaleTimeString(
-                                  [],
-                                  {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  }
-                                )
-                              : ""}
+                <main className="chat-area">
 
-                          </span>
+                    {!selectedChat ? (
+
+                        <div className="empty-chat">
+
+                            <div className="empty-chat-icon">
+                                💬
+                            </div>
+
+                            <h2>
+                                Welcome to DynamoChat
+                            </h2>
+
+                            <p>
+                                Select a chat or create
+                                a new conversation.
+                            </p>
 
                         </div>
 
-                      </div>
-                    );
-                  }
-                )}
+                    ) : (
 
-              </div>
+                        <>
+
+                            {/* =================================
+                                CHAT HEADER
+                            ================================== */}
+
+                            <div className="chat-header">
+    <div>
+        <h2>{selectedChat.name}</h2>
+        <span>
+            {selectedChat.memberCount} members
+        </span>
+    </div>
+
+    <div className="chat-header-actions">
+        {selectedChat.createdBy === currentUser.userId ? (
+            <button
+                className="chat-delete-button"
+                onClick={handleDeleteChat}
+                title="Delete this chat"
+            >
+                🗑 Delete Chat
+            </button>
+        ) : (
+            <button
+                className="chat-leave-button"
+                onClick={handleLeaveChat}
+                title="Leave this chat"
+            >
+                🚪 Leave Chat
+            </button>
+        )}
+    </div>
+</div>
 
 
-              {/* =============================================
-                  MESSAGE INPUT
-              ============================================= */}
+                            {/* =================================
+                                MEMBERS
+                            ================================== */}
 
-              <div className="message-input-area">
+                            <div className="members-bar">
 
-                <textarea
-                  value={messageText}
-                  onChange={(event) =>
-                    setMessageText(
-                      event.target.value
-                    )
-                  }
-                  onKeyDown={
-                    handleMessageKeyDown
-                  }
-                  placeholder="Type a message..."
-                  rows={1}
+                                {members.map(
+                                    (member) => (
+
+                                        <div
+                                            className="member-chip"
+                                            key={
+                                                member.userId
+                                            }
+                                        >
+
+                                            <span className="member-avatar">
+
+                                                {member.name
+                                                    ?.charAt(0)
+                                                    ?.toUpperCase()}
+
+                                            </span>
+
+                                            <span>
+                                                {member.name}
+                                            </span>
+
+                                        </div>
+
+                                    )
+                                )}
+
+                            </div>
+
+
+                            {/* =================================
+                                MESSAGES
+                            ================================== */}
+
+                            <div className="messages-container">
+
+                                {/* Load older */}
+
+                                {nextCursor && (
+
+                                    <button
+                                        className="load-more-button"
+                                        onClick={
+                                            loadOlderMessages
+                                        }
+                                    >
+                                        Load older messages
+                                    </button>
+
+                                )}
+
+
+                                {/* Loading */}
+
+                                {loading && (
+
+                                    <div className="loading-messages">
+                                        Loading...
+                                    </div>
+
+                                )}
+
+
+                                {/* Empty */}
+
+                                {!loading &&
+                                    messages.length === 0 && (
+
+                                        <div className="empty-messages">
+                                            No messages yet.
+                                            <br />
+                                            Start the conversation!
+                                        </div>
+
+                                    )}
+
+
+                                {/* Messages */}
+
+                                {messages.map(
+                                    (message) => {
+
+                                        const isMine =
+                                            message.senderId ===
+                                            currentUser.userId;
+
+
+                                        const sender =
+                                            users.find(
+                                                (user) =>
+                                                    user.userId ===
+                                                    message.senderId
+                                            );
+
+
+                                        return (
+
+                                            <div
+                                                key={
+                                                    message.messageId
+                                                }
+                                                className={
+                                                    isMine
+                                                        ? "message-row mine"
+                                                        : "message-row"
+                                                }
+                                            >
+
+                                                {/* Other user avatar */}
+
+                                                {!isMine && (
+
+                                                    <div className="message-avatar">
+
+                                                        {sender?.name
+                                                            ?.charAt(0)
+                                                            ?.toUpperCase() ||
+                                                            "U"}
+
+                                                    </div>
+
+                                                )}
+
+
+                                                <div className="message-content">
+
+                                                    {/* Sender name */}
+
+                                                    {!isMine && (
+
+                                                        <div className="message-sender">
+
+                                                            {sender?.name ||
+                                                                "Unknown User"}
+
+                                                        </div>
+
+                                                    )}
+
+
+                                                    {/* Message */}
+
+                                                    <div className="message-bubble">
+
+                                                        <span>
+                                                            {message.message}
+                                                        </span>
+
+
+                                                        {/* =================================
+                                                            DELETE MESSAGE
+
+                                                            Only sender sees this
+                                                        ================================== */}
+
+                                                        {isMine && (
+
+                                                            <button
+                                                                className="delete-message-button"
+                                                                onClick={() =>
+                                                                    handleDeleteMessage(
+                                                                        message.messageId
+                                                                    )
+                                                                }
+                                                                title="Delete message"
+                                                                aria-label="Delete message"
+                                                            >
+                                                                🗑
+                                                            </button>
+
+                                                        )}
+
+                                                    </div>
+
+
+                                                    {/* Time */}
+
+                                                    <div className="message-time">
+
+                                                        {new Date(
+                                                            message.createdAt
+                                                        ).toLocaleTimeString(
+                                                            [],
+                                                            {
+                                                                hour:
+                                                                    "2-digit",
+
+                                                                minute:
+                                                                    "2-digit"
+                                                            }
+                                                        )}
+
+                                                    </div>
+
+                                                </div>
+
+                                            </div>
+
+                                        );
+                                    }
+                                )}
+
+                            </div>
+
+
+                            {/* =================================
+                                MESSAGE INPUT
+                            ================================== */}
+
+                            <div className="message-input-container">
+
+                                <textarea
+                                    value={
+                                        messageText
+                                    }
+                                    onChange={(e) =>
+                                        setMessageText(
+                                            e.target.value
+                                        )
+                                    }
+                                    onKeyDown={
+                                        handleMessageKeyDown
+                                    }
+                                    placeholder="Type a message..."
+                                    rows={1}
+                                />
+
+
+                                <button
+                                    className="send-button"
+                                    onClick={
+                                        sendMessage
+                                    }
+                                    disabled={
+                                        !messageText.trim()
+                                    }
+                                >
+                                    Send
+                                </button>
+
+                            </div>
+
+                        </>
+
+                    )}
+
+                </main>
+
+            </div>
+
+
+            {/* =========================================
+                ERROR TOAST
+            ========================================== */}
+
+            {error && (
+
+                <div className="error-toast">
+
+                    <span>
+                        {error}
+                    </span>
+
+
+                    <button
+                        onClick={
+                            clearError
+                        }
+                        aria-label="Close error"
+                    >
+                        ×
+                    </button>
+
+                </div>
+
+            )}
+
+
+            {/* =========================================
+                NEW CHAT MODAL
+            ========================================== */}
+
+            {showNewChat && (
+
+                <NewChatModal
+                    users={users}
+                    currentUser={currentUser}
+                    onClose={() =>
+                        setShowNewChat(false)
+                    }
+                    onCreate={createChat}
                 />
 
-                <button
-                  className="send-button"
-                  onClick={sendMessage}
-                  disabled={
-                    sending ||
-                    !messageText.trim()
-                  }
-                >
-                  {sending
-                    ? "..."
-                    : "Send"}
-                </button>
-
-              </div>
-
-            </>
-          ) : (
-
-            <div className="no-chat-selected">
-
-              <div className="large-chat-icon">
-                💬
-              </div>
-
-              <h2>
-                Welcome,{" "}
-                {currentUser.name}
-              </h2>
-
-              <p>
-                Select a conversation
-                to start chatting.
-              </p>
-
-              <button
-                className="primary-button"
-                style={{
-                  width: "auto",
-                  marginTop: "12px",
-                  padding: "10px 18px",
-                }}
-                onClick={openNewChat}
-              >
-                + Create New Chat
-              </button>
-
-            </div>
-
-          )}
-
-        </main>
-
-      </div>
-
-
-      {/* =====================================================
-          CREATE NEW CHAT MODAL
-      ===================================================== */}
-
-      {showNewChat && (
-
-        <div
-          className="modal-overlay"
-          onClick={closeNewChat}
-        >
-
-          <div
-            className="new-chat-modal"
-            onClick={(event) =>
-              event.stopPropagation()
-            }
-          >
-
-            {/* MODAL HEADER */}
-
-            <div className="modal-header">
-
-              <div>
-
-                <h2>
-                  Create New Chat
-                </h2>
-
-                <p>
-                  Select registered users
-                  for this conversation.
-                </p>
-
-              </div>
-
-              <button
-                className="modal-close"
-                onClick={closeNewChat}
-                disabled={
-                  newChatLoading
-                }
-              >
-                ×
-              </button>
-
-            </div>
-
-
-            {/* MODAL BODY */}
-
-            <div className="modal-body">
-
-              <label>
-                Chat Name
-              </label>
-
-              <input
-                className="chat-name-input"
-                type="text"
-                value={newChatName}
-                onChange={(event) =>
-                  setNewChatName(
-                    event.target.value
-                  )
-                }
-                placeholder="Example: Development Team"
-                disabled={
-                  newChatLoading
-                }
-              />
-
-
-              <div className="members-heading">
-
-                <div>
-
-                  <strong>
-                    Select Members
-                  </strong>
-
-                  <span>
-                    {selectedMemberIds.length}{" "}
-                    selected
-                  </span>
-
-                </div>
-
-              </div>
-
-
-              {usersLoading ? (
-
-                <div className="users-loading">
-                  Loading registered
-                  users...
-                </div>
-
-              ) : availableUsers.length ===
-                0 ? (
-
-                <div className="users-loading">
-                  No registered users
-                  found.
-                </div>
-
-              ) : (
-
-                <div className="users-selection">
-
-                  {availableUsers.map(
-                    (user) => {
-
-                      const userId =
-                        String(
-                          user.userId
-                        );
-
-                      const isSelected =
-                        selectedMemberIds.includes(
-                          userId
-                        );
-
-                      const isCurrentUser =
-                        userId ===
-                        String(
-                          currentUser.userId
-                        );
-
-                      return (
-
-                        <button
-                          type="button"
-                          key={userId}
-                          className={`user-selection-item ${
-                            isSelected
-                              ? "selected"
-                              : ""
-                          }`}
-                          onClick={() =>
-                            toggleMember(
-                              userId
-                            )
-                          }
-                          disabled={
-                            newChatLoading
-                          }
-                        >
-
-                          <div className="selection-avatar">
-
-                            {getInitials(
-                              user.name ||
-                                `User ${userId}`
-                            )}
-
-                          </div>
-
-
-                          <div className="selection-user-info">
-
-                            <strong>
-                              {user.name ||
-                                `User ${userId}`}
-                            </strong>
-
-                            <span>
-                              ID: {userId}
-                              {isCurrentUser
-                                ? " · You"
-                                : ""}
-                            </span>
-
-                          </div>
-
-
-                          <div
-                            className={`selection-check ${
-                              isSelected
-                                ? "checked"
-                                : ""
-                            }`}
-                          >
-                            {isSelected
-                              ? "✓"
-                              : ""}
-                          </div>
-
-                        </button>
-
-                      );
-                    }
-                  )}
-
-                </div>
-
-              )}
-
-
-              {newChatError && (
-                <div className="new-chat-error">
-                  {newChatError}
-                </div>
-              )}
-
-            </div>
-
-
-            {/* MODAL FOOTER */}
-
-            <div className="modal-footer">
-
-              <button
-                className="cancel-chat-button"
-                onClick={closeNewChat}
-                disabled={
-                  newChatLoading
-                }
-              >
-                Cancel
-              </button>
-
-              <button
-                className="create-chat-button"
-                onClick={createNewChat}
-                disabled={
-                  newChatLoading ||
-                  !newChatName.trim() ||
-                  selectedMemberIds.length < 2
-                }
-              >
-                {newChatLoading
-                  ? "Creating..."
-                  : "Create Chat"}
-              </button>
-
-            </div>
-
-          </div>
+            )}
 
         </div>
-
-      )}
-
-    </div>
-  );
+    );
 }
+const handleLeaveChat = async () => {
+    if (!selectedChat) {
+        return;
+    }
+
+    const confirmed = window.confirm(
+        `Are you sure you want to leave "${selectedChat.name}"?`
+    );
+
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        await chatApi.leave(selectedChat.chatId);
+
+        const remainingChats = chats.filter(
+            (chat) => chat.chatId !== selectedChat.chatId
+        );
+
+        setChats(remainingChats);
+        setSelectedChat(null);
+        setMessages([]);
+        setMembers([]);
+
+        alert("You have left the chat.");
+
+    } catch (error) {
+        console.error(
+            "Leave chat error:",
+            error
+        );
+
+        alert(
+            error.message ||
+            "Failed to leave chat"
+        );
+    }
+};
+
+
+// =====================================================
+// NEW CHAT MODAL
+// =====================================================
+
+function NewChatModal({
+    users,
+    currentUser,
+    onClose,
+    onCreate
+}) {
+
+    const [name, setName] =
+        useState("");
+
+
+    const [selectedUsers, setSelectedUsers] =
+        useState([]);
+
+
+    const [error, setError] =
+        useState("");
+
+
+    // =================================================
+    // AVAILABLE USERS
+    // =================================================
+
+    const availableUsers =
+        users.filter(
+            (user) =>
+                user.userId !==
+                currentUser.userId
+        );
+
+
+    // =================================================
+    // TOGGLE USER
+    // =================================================
+
+    const toggleUser = (userId) => {
+
+        setSelectedUsers((previous) => {
+
+            if (
+                previous.includes(userId)
+            ) {
+
+                return previous.filter(
+                    (id) =>
+                        id !== userId
+                );
+            }
+
+
+            return [
+                ...previous,
+                userId
+            ];
+        });
+    };
+
+
+    // =================================================
+    // CREATE
+    // =================================================
+
+    const handleCreate = async () => {
+
+        setError("");
+
+
+        if (!name.trim()) {
+
+            setError(
+                "Chat name is required"
+            );
+
+            return;
+        }
+
+
+        if (
+            selectedUsers.length === 0
+        ) {
+
+            setError(
+                "Select at least one member"
+            );
+
+            return;
+        }
+
+
+        try {
+
+            await onCreate(
+                name.trim(),
+                selectedUsers
+            );
+
+        } catch (error) {
+
+            setError(
+                error.message ||
+                "Failed to create chat"
+            );
+        }
+    };
+
+
+    return (
+        <div className="modal-overlay">
+
+            <div className="modal">
+
+                {/* =================================
+                    HEADER
+                ================================== */}
+
+                <div className="modal-header">
+
+                    <h2>
+                        Create New Chat
+                    </h2>
+
+
+                    <button
+                        onClick={onClose}
+                        aria-label="Close"
+                    >
+                        ×
+                    </button>
+
+                </div>
+
+
+                {/* =================================
+                    BODY
+                ================================== */}
+
+                <div className="modal-body">
+
+                    {/* CHAT NAME */}
+
+                    <div className="form-group">
+
+                        <label>
+                            Chat Name
+                        </label>
+
+                        <input
+                            type="text"
+                            value={name}
+                            onChange={(e) =>
+                                setName(
+                                    e.target.value
+                                )
+                            }
+                            placeholder="Enter chat name"
+                        />
+
+                    </div>
+
+
+                    {/* USERS */}
+
+                    <div className="form-group">
+
+                        <label>
+                            Select Members
+                        </label>
+
+
+                        <div className="user-selection">
+
+                            {availableUsers.length === 0 ? (
+
+                                <p>
+                                    No other registered
+                                    users available.
+                                </p>
+
+                            ) : (
+
+                                availableUsers.map(
+                                    (user) => (
+
+                                        <label
+                                            className="user-option"
+                                            key={
+                                                user.userId
+                                            }
+                                        >
+
+                                            <input
+                                                type="checkbox"
+                                                checked={
+                                                    selectedUsers.includes(
+                                                        user.userId
+                                                    )
+                                                }
+                                                onChange={() =>
+                                                    toggleUser(
+                                                        user.userId
+                                                    )
+                                                }
+                                            />
+
+
+                                            <span>
+
+                                                <strong>
+                                                    {user.name}
+                                                </strong>
+
+                                                <small>
+                                                    {user.loginId}
+                                                </small>
+
+                                            </span>
+
+                                        </label>
+
+                                    )
+                                )
+
+                            )}
+
+                        </div>
+
+                    </div>
+
+
+                    {/* ERROR */}
+
+                    {error && (
+
+                        <div className="error-message">
+                            {error}
+                        </div>
+
+                    )}
+
+                </div>
+
+
+                {/* =================================
+                    FOOTER
+                ================================== */}
+
+                <div className="modal-footer">
+
+                    <button
+                        className="cancel-button"
+                        onClick={onClose}
+                    >
+                        Cancel
+                    </button>
+
+
+                    <button
+                        className="create-button"
+                        onClick={handleCreate}
+                    >
+                        Create Chat
+                    </button>
+
+                </div>
+
+            </div>
+
+        </div>
+    );
+}
+
 
 export default App;
